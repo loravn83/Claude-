@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Covered Call Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#f0f9ff', 500: '#0ea5e9', 700: '#0369a1' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .spinner { border: 3px solid #e2e8f0; border-top-color: #0ea5e9; border-radius: 50%; width: 20px; height: 20px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tag-green  { background:#dcfce7; color:#166534; }
+    .tag-red    { background:#fee2e2; color:#991b1b; }
+    .tag-yellow { background:#fef9c3; color:#854d0e; }
+    .tag-gray   { background:#f1f5f9; color:#475569; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+<!-- Header -->
+<header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+  <div>
+    <h1 class="text-xl font-semibold text-slate-900">Covered Call Dashboard</h1>
+    <p class="text-sm text-slate-500">Screen opportunities · Track positions · Monitor P&amp;L</p>
+  </div>
+  <span id="last-updated" class="text-xs text-slate-400"></span>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-8 space-y-10">
+
+  <!-- Summary Cards -->
+  <section>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <p class="text-xs text-slate-500 uppercase tracking-wide">Open Positions</p>
+        <p id="card-open" class="text-3xl font-bold text-slate-900 mt-1">{{ summary.open_positions }}</p>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <p class="text-xs text-slate-500 uppercase tracking-wide">Premium Collected (Open)</p>
+        <p id="card-open-premium" class="text-3xl font-bold text-emerald-600 mt-1">${{ "%.2f"|format(summary.open_premium) }}</p>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <p class="text-xs text-slate-500 uppercase tracking-wide">Premium Collected (Closed)</p>
+        <p id="card-closed-premium" class="text-3xl font-bold text-slate-600 mt-1">${{ "%.2f"|format(summary.closed_premium) }}</p>
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-5">
+        <p class="text-xs text-slate-500 uppercase tracking-wide">Total Premium All-Time</p>
+        <p id="card-total" class="text-3xl font-bold text-brand-700 mt-1">${{ "%.2f"|format(summary.total_premium_all_time) }}</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screener -->
+  <section class="bg-white rounded-xl border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-4">Screener</h2>
+    <form id="screen-form" class="flex flex-wrap gap-3 items-end">
+      <div class="flex-1 min-w-[200px]">
+        <label class="block text-xs text-slate-500 mb-1">Tickers (comma-separated)</label>
+        <input name="tickers" type="text" placeholder="AAPL, MSFT, AIR.PA, NOVO-B.CO"
+          class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Min DTE</label>
+        <input name="dte_min" type="number" value="21" min="1" max="365"
+          class="w-20 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Max DTE</label>
+        <input name="dte_max" type="number" value="45" min="1" max="365"
+          class="w-20 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+      </div>
+      <button type="submit" id="screen-btn"
+        class="bg-brand-500 hover:bg-brand-700 text-white font-medium px-5 py-2 rounded-lg text-sm transition-colors">
+        Screen
+      </button>
+    </form>
+
+    <!-- Results -->
+    <div id="screen-results" class="mt-6 hidden">
+      <div id="screen-errors" class="mb-3 text-sm text-amber-700 bg-amber-50 rounded-lg px-4 py-2 hidden"></div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs text-slate-500 border-b border-slate-100">
+              <th class="pb-2 pr-4">Ticker</th>
+              <th class="pb-2 pr-4">Price</th>
+              <th class="pb-2 pr-4">Strike</th>
+              <th class="pb-2 pr-4">Expiry</th>
+              <th class="pb-2 pr-4">DTE</th>
+              <th class="pb-2 pr-4">Premium</th>
+              <th class="pb-2 pr-4">Yield</th>
+              <th class="pb-2 pr-4">Ann. Yield</th>
+              <th class="pb-2 pr-4">OTM%</th>
+              <th class="pb-2 pr-4">Breakeven</th>
+              <th class="pb-2 pr-4">IV</th>
+              <th class="pb-2 pr-4">IV Rank</th>
+              <th class="pb-2">Volume</th>
+            </tr>
+          </thead>
+          <tbody id="screen-tbody" class="divide-y divide-slate-50"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="screen-loading" class="mt-4 hidden text-sm text-slate-500 flex items-center gap-2">
+      <span class="spinner"></span> Fetching options data — this may take 10-30 seconds...
+    </div>
+  </section>
+
+  <!-- Positions -->
+  <section class="bg-white rounded-xl border border-slate-200 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Positions</h2>
+      <button onclick="toggleAddForm()"
+        class="text-sm bg-emerald-500 hover:bg-emerald-600 text-white font-medium px-4 py-2 rounded-lg transition-colors">
+        + Add Position
+      </button>
+    </div>
+
+    <!-- Add Position Form -->
+    <div id="add-form" class="hidden mb-6 bg-slate-50 rounded-xl p-5 border border-slate-200">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">Add New Position</h3>
+      <form id="position-form" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Ticker</label>
+          <input name="ticker" type="text" placeholder="AAPL" required
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Shares</label>
+          <input name="shares" type="number" placeholder="100" min="1" required
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Stock Entry Price</label>
+          <input name="stock_entry_price" type="number" step="0.01" placeholder="150.00"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Call Strike</label>
+          <input name="call_strike" type="number" step="0.01" placeholder="160.00" required
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Expiry (YYYY-MM-DD)</label>
+          <input name="call_expiry" type="date" required
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Premium per Share</label>
+          <input name="premium_per_share" type="number" step="0.01" placeholder="2.50" required
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs text-slate-500 mb-1">Notes (optional)</label>
+          <input name="notes" type="text" placeholder="Why this trade?"
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+        </div>
+        <div class="md:col-span-4 flex gap-2 mt-1">
+          <button type="submit"
+            class="bg-emerald-500 hover:bg-emerald-600 text-white font-medium px-4 py-2 rounded-lg text-sm transition-colors">
+            Save Position
+          </button>
+          <button type="button" onclick="toggleAddForm()"
+            class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium px-4 py-2 rounded-lg text-sm transition-colors">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Positions Table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="positions-table">
+        <thead>
+          <tr class="text-left text-xs text-slate-500 border-b border-slate-100">
+            <th class="pb-2 pr-4">Ticker</th>
+            <th class="pb-2 pr-4">Shares</th>
+            <th class="pb-2 pr-4">Entry</th>
+            <th class="pb-2 pr-4">Current</th>
+            <th class="pb-2 pr-4">Strike</th>
+            <th class="pb-2 pr-4">Expiry</th>
+            <th class="pb-2 pr-4">DTE</th>
+            <th class="pb-2 pr-4">Premium/sh</th>
+            <th class="pb-2 pr-4">Total Premium</th>
+            <th class="pb-2 pr-4">Status</th>
+            <th class="pb-2 pr-4">ITM</th>
+            <th class="pb-2">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="positions-tbody">
+          {% for pos in positions %}
+          <tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors" id="row-{{ pos.id }}">
+            <td class="py-3 pr-4 font-semibold">{{ pos.ticker }}</td>
+            <td class="py-3 pr-4">{{ pos.shares }}</td>
+            <td class="py-3 pr-4 text-slate-500">
+              {% if pos.stock_entry_price %}${{ "%.2f"|format(pos.stock_entry_price) }}{% else %}—{% endif %}
+            </td>
+            <td class="py-3 pr-4 current-price" data-ticker="{{ pos.ticker }}">
+              <span class="spinner"></span>
+            </td>
+            <td class="py-3 pr-4">${{ "%.2f"|format(pos.call_strike) }}</td>
+            <td class="py-3 pr-4">{{ pos.call_expiry }}</td>
+            <td class="py-3 pr-4">
+              {% if pos.dte is not none %}
+                {% if pos.dte < 0 %}
+                  <span class="tag-red text-xs px-2 py-0.5 rounded-full font-medium">Expired</span>
+                {% elif pos.dte <= 7 %}
+                  <span class="tag-yellow text-xs px-2 py-0.5 rounded-full font-medium">{{ pos.dte }}d</span>
+                {% else %}
+                  <span class="tag-gray text-xs px-2 py-0.5 rounded-full font-medium">{{ pos.dte }}d</span>
+                {% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="py-3 pr-4">${{ "%.2f"|format(pos.premium_per_share) }}</td>
+            <td class="py-3 pr-4 font-semibold text-emerald-600">${{ "%.2f"|format(pos.total_premium) }}</td>
+            <td class="py-3 pr-4">
+              {% if pos.status == 'open' %}
+                <span class="tag-green text-xs px-2 py-0.5 rounded-full font-medium">Open</span>
+              {% else %}
+                <span class="tag-gray text-xs px-2 py-0.5 rounded-full font-medium">Closed</span>
+              {% endif %}
+            </td>
+            <td class="py-3 pr-4 itm-cell" data-ticker="{{ pos.ticker }}" data-strike="{{ pos.call_strike }}">
+              {% if pos.status == 'closed' %}—{% else %}<span class="spinner"></span>{% endif %}
+            </td>
+            <td class="py-3">
+              {% if pos.status == 'open' %}
+              <button onclick="closePosition({{ pos.id }})"
+                class="text-xs text-amber-600 hover:underline mr-2">Close</button>
+              {% endif %}
+              <button onclick="deletePosition({{ pos.id }})"
+                class="text-xs text-red-500 hover:underline">Delete</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr id="empty-row">
+            <td colspan="12" class="py-8 text-center text-slate-400 text-sm">
+              No positions yet. Use the screener to find opportunities, then add them here.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// -----------------------------------------------------------------------
+// Screener
+// -----------------------------------------------------------------------
+
+document.getElementById('screen-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const form = e.target
+  const btn = document.getElementById('screen-btn')
+  const loading = document.getElementById('screen-loading')
+  const results = document.getElementById('screen-results')
+  const errorsDiv = document.getElementById('screen-errors')
+
+  btn.disabled = true
+  btn.textContent = 'Screening...'
+  loading.classList.remove('hidden')
+  results.classList.add('hidden')
+
+  const data = new FormData(form)
+  try {
+    const res = await fetch('/api/screen', { method: 'POST', body: data })
+    const json = await res.json()
+
+    if (json.errors && json.errors.length > 0) {
+      errorsDiv.textContent = `Could not fetch data for: ${json.errors.join(', ')} (no options data or invalid ticker)`
+      errorsDiv.classList.remove('hidden')
+    } else {
+      errorsDiv.classList.add('hidden')
+    }
+
+    const tbody = document.getElementById('screen-tbody')
+    tbody.innerHTML = ''
+
+    if (json.results.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="13" class="py-6 text-center text-slate-400">No results found for the given parameters.</td></tr>'
+    } else {
+      json.results.forEach(r => {
+        const ivRankBadge = r.iv_rank !== null
+          ? ivRankBadgeHtml(r.iv_rank)
+          : '<span class="tag-gray text-xs px-2 py-0.5 rounded-full">N/A</span>'
+
+        tbody.innerHTML += `
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="py-3 pr-4 font-semibold">${r.ticker}</td>
+            <td class="py-3 pr-4">$${r.price}</td>
+            <td class="py-3 pr-4">$${r.strike}</td>
+            <td class="py-3 pr-4">${r.expiry}</td>
+            <td class="py-3 pr-4">${r.dte}d</td>
+            <td class="py-3 pr-4">$${r.premium}</td>
+            <td class="py-3 pr-4">${r.yield_pct}%</td>
+            <td class="py-3 pr-4 font-semibold text-emerald-600">${r.annualised_yield}%</td>
+            <td class="py-3 pr-4">+${r.otm_pct}%</td>
+            <td class="py-3 pr-4">$${r.breakeven}</td>
+            <td class="py-3 pr-4">${r.iv}%</td>
+            <td class="py-3 pr-4">${ivRankBadge}</td>
+            <td class="py-3">${r.volume.toLocaleString()}</td>
+          </tr>`
+      })
+    }
+
+    results.classList.remove('hidden')
+  } catch (err) {
+    alert('Error fetching screening data. Check the server.')
+  } finally {
+    btn.disabled = false
+    btn.textContent = 'Screen'
+    loading.classList.add('hidden')
+  }
+})
+
+function ivRankBadgeHtml(rank) {
+  let cls = 'tag-gray'
+  if (rank >= 50) cls = 'tag-green'
+  if (rank >= 75) cls = 'tag-red'
+  return `<span class="${cls} text-xs px-2 py-0.5 rounded-full font-medium">${rank}</span>`
+}
+
+// -----------------------------------------------------------------------
+// Add Position Form
+// -----------------------------------------------------------------------
+
+function toggleAddForm() {
+  const form = document.getElementById('add-form')
+  form.classList.toggle('hidden')
+}
+
+document.getElementById('position-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const data = new FormData(e.target)
+  const res = await fetch('/api/positions', { method: 'POST', body: data })
+  if (res.ok) {
+    window.location.reload()
+  } else {
+    alert('Error adding position.')
+  }
+})
+
+// -----------------------------------------------------------------------
+// Close / Delete Position
+// -----------------------------------------------------------------------
+
+async function closePosition(id) {
+  const price = prompt('Enter close price (option price at close, or 0 if expired worthless):')
+  if (price === null) return
+  const data = new FormData()
+  data.append('close_price', parseFloat(price) || 0)
+  const res = await fetch(`/api/positions/${id}/close`, { method: 'POST', body: data })
+  if (res.ok) window.location.reload()
+  else alert('Error closing position.')
+}
+
+async function deletePosition(id) {
+  if (!confirm('Delete this position permanently?')) return
+  const res = await fetch(`/api/positions/${id}`, { method: 'DELETE' })
+  if (res.ok) window.location.reload()
+  else alert('Error deleting position.')
+}
+
+// -----------------------------------------------------------------------
+// Live Prices (fetch after page load)
+// -----------------------------------------------------------------------
+
+async function loadLivePrices() {
+  const cells = document.querySelectorAll('.current-price[data-ticker]')
+  if (cells.length === 0) return
+
+  const unique = [...new Set([...cells].map(c => c.dataset.ticker))]
+  const res = await fetch(`/api/prices?tickers=${unique.join(',')}`)
+  const prices = await res.json()
+
+  cells.forEach(cell => {
+    const ticker = cell.dataset.ticker
+    const price = prices[ticker]
+    cell.textContent = price !== undefined ? `$${price}` : '—'
+  })
+
+  // Update ITM indicators
+  document.querySelectorAll('.itm-cell[data-ticker]').forEach(cell => {
+    const ticker = cell.dataset.ticker
+    const strike = parseFloat(cell.dataset.strike)
+    const price = prices[ticker]
+    if (price === undefined) { cell.textContent = '—'; return }
+    if (price >= strike) {
+      cell.innerHTML = '<span class="tag-red text-xs px-2 py-0.5 rounded-full font-medium">ITM</span>'
+    } else {
+      cell.innerHTML = '<span class="tag-green text-xs px-2 py-0.5 rounded-full font-medium">OTM</span>'
+    }
+  })
+
+  document.getElementById('last-updated').textContent =
+    'Prices updated: ' + new Date().toLocaleTimeString()
+}
+
+// Load prices on page load, then refresh every 5 minutes
+loadLivePrices()
+setInterval(loadLivePrices, 5 * 60 * 1000)
+</script>
+</body>
+</html>

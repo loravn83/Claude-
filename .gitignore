@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Database (local data, not committed)
+positions.db
+
+# OS
+.DS_Store
+Thumbs.db
